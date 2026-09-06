@@ -122,8 +122,10 @@ Flow:
    resolve a risk (**adjust** vs **keep as-is**). Locked sections are never re-dispatched or
    auto-changed. Bounded by a maximum revision count. See §7.6 for the full model.
 
-External dependencies: `langgraph`, `langchain`, `langchain-anthropic`, and the Anthropic
-API (`ANTHROPIC_API_KEY`). No travel or hotel APIs are used — fixtures only.
+External dependencies: `langgraph` + `langchain` (core), plus **one** model-provider
+integration chosen at install time (Anthropic / OpenAI / Google Gemini / Groq / Ollama /
+…) and its API key. The model is never hard-coded — see §7.5. No travel or hotel APIs are
+used — fixtures only.
 
 ---
 
@@ -207,12 +209,30 @@ runs.
 
 ### 7.5 Models & Prompts
 
-- **Model(s):** orchestrator / `intake` / `synthesize` use `claude-sonnet-5` via
-  `langchain_anthropic.ChatAnthropic`. The specialist agents may use the cheaper
-  `claude-haiku-4-5-20251001`; record the final choice in the Decision Log (Appendix B).
-- **Prompt location:** `src/<pkg>/prompts/`, one module per node (`intake`,
-  `travel_agent`, `accommodation_agent`, `synthesize`, `coherence_check`).
-- **Prompt versioning:** plain source control for the POC.
+**Model-agnostic by design.** No node imports a provider class. A single factory,
+`src/travel_agent_assistant/models.py::get_model(role)`, builds every chat model via
+LangChain's `init_chat_model("<provider>:<model>")`. Switching providers is an env-var
+change, no code change.
+
+- **Config:**
+  - `TAA_MODEL` — default spec for all roles, e.g. `anthropic:claude-sonnet-5`,
+    `google_genai:gemini-2.5-flash`, `groq:llama-3.3-70b-versatile`, `ollama:llama3.1`.
+  - `TAA_MODEL_<ROLE>` — optional per-role override, `<ROLE>` ∈ `INTAKE`, `SPECIALIST`,
+    `COHERENCE`, `SYNTHESIZE`. Falls back to `TAA_MODEL`.
+  - `get_model` also sets `temperature` per role (low for `intake` / `coherence_check`,
+    a little higher for `synthesize`).
+- **Reference model:** `anthropic:claude-sonnet-5` is what the prompts are tuned against;
+  any tool-calling-capable chat model should work. Record the model actually used for a
+  given demo in the Decision Log (Appendix B).
+- **Provider packages** are optional extras in `pyproject.toml` (`anthropic`, `openai`,
+  `google`, `groq`, `ollama`); install only what you use (`uv sync --extra google`).
+  Core deps never pull a provider.
+- **`create_agent`** (the two specialists) is passed a `get_model(...)` instance, so it is
+  provider-agnostic too.
+- **Prompt location:** `src/travel_agent_assistant/prompts/`, one module per LLM node
+  (`intake`, `travel_agent`, `accommodation_agent`, `synthesize`, `coherence_check`).
+- **Prompt versioning:** plain source control for the POC. Prompts must not assume a
+  specific provider's quirks; keep them plain and instruction-led.
 
 ### 7.6 Loose vs locked sections & the coherence check
 
@@ -312,11 +332,15 @@ TODO — adjust to taste
 
 | Name | Purpose | Required | Example |
 |------|---------|----------|---------|
-| `ANTHROPIC_API_KEY` | model access | yes | — |
-| `TODO` | | | |
+| `TAA_MODEL` | default model spec for all LLM nodes (`init_chat_model` form) | yes | `google_genai:gemini-2.5-flash` |
+| `TAA_MODEL_INTAKE` / `_SPECIALIST` / `_COHERENCE` / `_SYNTHESIZE` | per-role model override | no | `groq:llama-3.3-70b-versatile` |
+| provider API key | model access — the one matching `TAA_MODEL`'s provider | one of | `GOOGLE_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY` (none for `ollama:*`) |
+| `LANGSMITH_API_KEY` / `LANGSMITH_TRACING` / `LANGSMITH_PROJECT` | tracing (see §11) | no | `travel-agent-assistant` |
 
-- Secrets: loaded from `.env` (gitignored); never committed.
-- Sample data: TODO
+- Secrets: loaded from `.env` (gitignored, `.env.example` committed); never committed.
+- Free-to-start providers (no card): Google AI Studio (`GOOGLE_API_KEY`), Groq
+  (`GROQ_API_KEY`), or local Ollama.
+- Sample data: `tests/fixtures/{travel,accommodation}.json` (see §7.4, §12).
 
 ---
 
@@ -382,6 +406,7 @@ _What a real implementation would add beyond this POC._
 | 2026-09-02 | `plan.md` is the source of truth | practicing spec-driven development | code-first |
 | 2026-09-06 | Interface is the **React console** (`travel-agent-console/`); backend is a graph service, not a CLI app | the console prototype was built first and is the product surface | interactive CLI |
 | 2026-09-06 | **Prototype-driven** workflow: tactical work in `docs/prototype-todo.md`; `plan.md` holds the durable design, ethos, and requirements, updated when a change proves out | building surfaces the real requirements; a section-by-section spec fill was premature | fill `plan.md` top-to-bottom first |
+| 2026-09-06 | **Model-agnostic**: all nodes build models via `models.py::get_model` → `init_chat_model`; provider is an env var + optional install extra, not a code dependency | Anthropic billing not set up yet; want to build on a free provider (Gemini/Groq/Ollama) and swap later without rework | pin `langchain-anthropic` + `ChatAnthropic` directly |
 
 ## Appendix C. Acceptance Checklist
 
